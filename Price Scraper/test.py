@@ -12,7 +12,10 @@ options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1920,1080")
 
-driver = uc.Chrome(options=options)
+driver = uc.Chrome(
+    options=options,
+    browser_executable_path="/usr/bin/google-chrome"
+)
 driver.get("https://example.com")
 print(driver.title)
 
