@@ -34,28 +34,35 @@ function safeWriteFile(p, data) {
   fs.renameSync(tmp, p);
 }
 
+// ========== VENV PYTHON PATH ==========
+const venvPython = path.resolve(__dirname, '..', '..', 'Price Scraper', 'venv', 'bin', 'python3');
+
 // ========== PRICE SCRAPER HELPER ==========
 function getPriceForSkin(skin) {
   return new Promise((resolve, reject) => {
     const scraper = path.resolve(__dirname, '..', '..', 'Price Scraper', 'pe_scrape_price.py');
-    const py = spawn('python3', [ scraper, skin ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const py = spawn(venvPython, [ scraper, skin ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    let out = '', err = '';
+    py.on('error', err => {
+      console.error('[PRICE] Python3 spawn error:', err);
+      return reject(err);
+    });
+
+    let out = '', errBuf = '';
     py.stdout.on('data', d => out += d.toString());
-    py.stderr.on('data', d => err += d.toString());
+    py.stderr.on('data', d => errBuf += d.toString());
 
     py.on('close', code => {
       if (code !== 0) {
-        return reject(new Error(`scraper exited ${code}: ${err.trim()}`));
+        console.error('[PRICE] scraper exited', code, errBuf.trim());
+        return reject(new Error(`scraper exited ${code}`));
       }
       const m = out.match(/\$([\d\.]+)/);
       if (!m) {
-        return reject(new Error(`Invalid price from scraper: "${out.trim()}"`));
+        console.error('[PRICE] Couldn’t parse price from:', out.trim());
+        return reject(new Error('Invalid price from scraper'));
       }
       const num = parseFloat(m[1]);
-      if (isNaN(num)) {
-        return reject(new Error(`Parsed NaN from "${m[1]}"`));
-      }
       resolve(num);
     });
   });
@@ -64,12 +71,13 @@ function getPriceForSkin(skin) {
 // ========== FULL-PYTHON UPDATER ==========
 function runPythonUpdater() {
   const updater = path.resolve(__dirname, '..', 'update_inventory.py');
-  const cwd     = path.dirname(updater);
-  const py = spawn('python3', [ updater ], { cwd, stdio:['ignore','pipe','pipe'] });
+  const py = spawn(venvPython, [ updater ], { cwd: path.dirname(updater), stdio:['ignore','pipe','pipe'] });
+
+  py.on('error', err => console.error('[UPDATER] Python3 spawn error:', err));
   py.stdout.on('data', d => console.log(`Python stdout: ${d}`));
   py.stderr.on('data', d => console.error(`Python stderr: ${d}`));
   py.on('close', code => {
-    if (code !== 0) console.error(`update_inventory.py exited with code ${code}`);
+    if (code !== 0) console.error(`[UPDATER] update_inventory.py exited with code ${code}`);
   });
 }
 
@@ -130,21 +138,31 @@ const vault    = new ethers.Contract(CONTRACT_ADDRESS, VAULT_ABI, wallet);
 
 const client    = new SteamUser();
 const community = new SteamCommunity();
-const manager   = new TradeOfferManager({ steam: client, community, language: 'en', pollInterval: 5000 });
+const manager   = new TradeOfferManager({
+  steam: client,
+  community,
+  language: 'en',
+  pollInterval: 1000  // poll every second for faster detection
+});
 
+// Steam login
 client.logOn({
   accountName: config.username,
   password:    config.password,
   twoFactorCode: SteamTotp.generateAuthCode(config.shared_secret)
 });
+
 client.on('loggedOn', () => {
   console.log('Logged into Steam');
   client.setPersona(SteamUser.EPersonaState.Online);
 });
+
 client.on('webSession', (sid, cookies) => {
   manager.setCookies(cookies, err => err ? console.error(err) : console.log('TradeOfferManager ready.'));
   community.setCookies(cookies);
 });
+
+// Offer change handlers
 manager.on('sentOfferChanged', (o, old) => {
   if (o.state === TradeOfferManager.ETradeOfferState.Accepted) enqueueTradeEvent(o, 'sent');
 });
@@ -187,7 +205,7 @@ async function handleTrade(event) {
     }
   }
 
-  // 2) mint on-chain for 'sent' trades, skipping if below 1 wei
+  // 2) mint on-chain for 'sent' trades
   if (event.type === 'sent') {
     const addr = (event.message || '').match(/0x[a-fA-F0-9]{40}/)?.[0];
     if (addr && totalUsd > 0) {
@@ -205,7 +223,7 @@ async function handleTrade(event) {
     }
   }
 
-  // 3) update CSV with scraped prices & quantities
+  // 3) update CSV
   for (const item of event.itemsToReceive || []) {
     updateInventoryCSV(item.market_hash_name, 1, prices[item.market_hash_name]?.toFixed(2) || "");
   }
@@ -217,7 +235,7 @@ async function handleTrade(event) {
   runPythonUpdater();
 }
 
-// helper to fetch ETH/USD
+// fetch ETH/USD
 async function getEthPriceUSD() {
   try {
     const r = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
