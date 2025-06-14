@@ -14,11 +14,8 @@ options.add_argument("--window-size=1920,1080")
 options.add_argument("--start-maximized")
 options.add_argument("--disable-blink-features=AutomationControlled")
 
-# Correct argument for UCD v3.4.7 is 'executable_path'
-driver = uc.Chrome(
-    options=options,
-    executable_path="/usr/bin/google-chrome"
-)
+# Don't pass executable_path — UCD 3.4.7 handles Chrome detection internally
+driver = uc.Chrome(options=options)
 
 driver.get("https://example.com")
 print("Page title:", driver.title)
