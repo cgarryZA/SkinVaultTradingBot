@@ -38,7 +38,7 @@ function safeWriteFile(p, data) {
 function getPriceForSkin(skin) {
   return new Promise((resolve, reject) => {
     const scraper = path.resolve(__dirname, '..', '..', 'Price Scraper', 'pe_scrape_price.py');
-    const py = spawn('python', [ scraper, skin ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const py = spawn('python3', [ scraper, skin ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let out = '', err = '';
     py.stdout.on('data', d => out += d.toString());
@@ -65,7 +65,7 @@ function getPriceForSkin(skin) {
 function runPythonUpdater() {
   const updater = path.resolve(__dirname, '..', 'update_inventory.py');
   const cwd     = path.dirname(updater);
-  const py = spawn('python', [ updater ], { cwd, stdio:['ignore','pipe','pipe'] });
+  const py = spawn('python3', [ updater ], { cwd, stdio:['ignore','pipe','pipe'] });
   py.stdout.on('data', d => console.log(`Python stdout: ${d}`));
   py.stderr.on('data', d => console.error(`Python stderr: ${d}`));
   py.on('close', code => {
