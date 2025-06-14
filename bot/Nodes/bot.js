@@ -1,12 +1,5 @@
 // robust_trade_bot.js
 
-// ========== CONFIG ==========
-const configPath = require('path').resolve(__dirname, '../config.json');
-const config     = require(configPath);
-const PORT       = 3333;
-const INVENTORY_CSV = '../Inventory.csv';
-const QUEUE_FILE    = './pending_trades.json';
-
 const { ethers } = require('ethers');
 const fs        = require('fs');
 const path      = require('path');
@@ -18,6 +11,13 @@ const SteamTotp   = require('steam-totp');
 const SteamUser   = require('steam-user');
 const SteamCommunity = require('steamcommunity');
 const TradeOfferManager = require('steam-tradeoffer-manager');
+
+// ========== CONFIG ==========
+const configPath = path.resolve(__dirname, '..', 'config.json');  // <-- one level up into bot/
+const config     = require(configPath);
+const PORT       = 3333;
+const INVENTORY_CSV = '/Inventory.csv';
+const QUEUE_FILE    = './pending_trades.json';
 
 // ========== ETH CONFIG ==========
 const PRIVATE_KEY      = config.private_key;
