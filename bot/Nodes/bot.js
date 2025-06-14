@@ -45,7 +45,7 @@ console.log('Using Python at:', venvPython);
 // ========== PRICE SCRAPER ==========
 function getPriceForSkin(skin) {
   return new Promise((resolve, reject) => {
-    const scraper = path.resolve(__dirname, '..', 'Price Scraper', 'pe_scrape_price.py');
+    const scraper = path.resolve(__dirname, '..', '..', 'price_scraper', 'pe_scrape_price.py');
     const py = spawn(venvPython, [ scraper, skin ], { stdio: ['ignore','pipe','pipe'] });
 
     py.on('error', err => reject(err));
