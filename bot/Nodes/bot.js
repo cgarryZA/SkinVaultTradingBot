@@ -1,8 +1,9 @@
 // robust_trade_bot.js
 
 // ========== CONFIG ==========
-const config = require('../config.json');
-const PORT = 3333;
+const configPath = require('path').resolve(__dirname, '../config.json');
+const config     = require(configPath);
+const PORT       = 3333;
 const INVENTORY_CSV = '../Inventory.csv';
 const QUEUE_FILE    = './pending_trades.json';
 
@@ -35,7 +36,10 @@ function safeWriteFile(p, data) {
 }
 
 // ========== VENV PYTHON PATH ==========
-const venvPython = path.resolve(__dirname, '..', '..', 'Price Scraper', 'venv', 'bin', 'python3');
+const venvPython = path.resolve(
+  __dirname, '..', '..', 'Price Scraper', 'venv', 'bin', 'python3'
+);
+console.log('Using Python at:', venvPython);
 
 // ========== PRICE SCRAPER HELPER ==========
 function getPriceForSkin(skin) {
@@ -44,7 +48,7 @@ function getPriceForSkin(skin) {
     const py = spawn(venvPython, [ scraper, skin ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     py.on('error', err => {
-      console.error('[PRICE] Python3 spawn error:', err);
+      console.error('[PRICE] Python spawn error:', err);
       return reject(err);
     });
 
@@ -62,8 +66,7 @@ function getPriceForSkin(skin) {
         console.error('[PRICE] Couldn’t parse price from:', out.trim());
         return reject(new Error('Invalid price from scraper'));
       }
-      const num = parseFloat(m[1]);
-      resolve(num);
+      resolve(parseFloat(m[1]));
     });
   });
 }
@@ -71,9 +74,9 @@ function getPriceForSkin(skin) {
 // ========== FULL-PYTHON UPDATER ==========
 function runPythonUpdater() {
   const updater = path.resolve(__dirname, '..', 'update_inventory.py');
-  const py = spawn(venvPython, [ updater ], { cwd: path.dirname(updater), stdio:['ignore','pipe','pipe'] });
+  const py = spawn(venvPython, [ updater ], { cwd: path.dirname(updater), stdio: ['ignore','pipe','pipe'] });
 
-  py.on('error', err => console.error('[UPDATER] Python3 spawn error:', err));
+  py.on('error', err => console.error('[UPDATER] Python spawn error:', err));
   py.stdout.on('data', d => console.log(`Python stdout: ${d}`));
   py.stderr.on('data', d => console.error(`Python stderr: ${d}`));
   py.on('close', code => {
@@ -93,9 +96,7 @@ function updateInventoryCSV(skin, qtyDelta, price = "") {
     const [name, qtyStr, val, last] = line.split(',');
     inv[name] = { qty: parseInt(qtyStr), price: val, lastUpdated: last || "" };
   }
-  if (!inv[skin]) {
-    inv[skin] = { qty: 0, price, lastUpdated: new Date().toISOString() };
-  }
+  if (!inv[skin]) inv[skin] = { qty: 0, price, lastUpdated: new Date().toISOString() };
   inv[skin].qty += qtyDelta;
   if (price) inv[skin].price = price;
   if (inv[skin].qty <= 0) delete inv[skin];
@@ -142,15 +143,33 @@ const manager   = new TradeOfferManager({
   steam: client,
   community,
   language: 'en',
-  pollInterval: 1000  // poll every second for faster detection
+  pollInterval: 1000
 });
 
-// Steam login
-client.logOn({
+// Handle SteamUser errors and reconnect
+const logOnOptions = {
   accountName: config.username,
   password:    config.password,
+  rememberPassword: true,
+  loginKey:    config.login_key || null,
   twoFactorCode: SteamTotp.generateAuthCode(config.shared_secret)
+};
+
+client.on('error', err => {
+  console.error('[STEAM USER ERROR]', err);
+  if (err.eresult === SteamUser.EResult.AccountLoginDeniedThrottle) {
+    console.log('Throttled — retrying logOn in 30s');
+    setTimeout(() => client.logOn(logOnOptions), 30_000);
+  }
 });
+
+client.on('loginKey', key => {
+  console.log('Received new Steam loginKey');
+  config.login_key = key;
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+});
+
+client.logOn(logOnOptions);
 
 client.on('loggedOn', () => {
   console.log('Logged into Steam');
@@ -162,7 +181,9 @@ client.on('webSession', (sid, cookies) => {
   community.setCookies(cookies);
 });
 
-// Offer change handlers
+manager.on('error', err => console.error('[TRADE MANAGER ERROR]', err));
+community.on('error', err => console.error('[STEAM COMM ERROR]', err));
+
 manager.on('sentOfferChanged', (o, old) => {
   if (o.state === TradeOfferManager.ETradeOfferState.Accepted) enqueueTradeEvent(o, 'sent');
 });
@@ -190,9 +211,7 @@ async function processQueue() {
 }
 
 async function handleTrade(event) {
-  // 1) scrape USD price for each received item
-  let totalUsd = 0;
-  const prices = {};
+  let totalUsd = 0, prices = {};
   for (const item of event.itemsToReceive || []) {
     const name = item.market_hash_name;
     try {
@@ -205,43 +224,37 @@ async function handleTrade(event) {
     }
   }
 
-  // 2) mint on-chain for 'sent' trades
   if (event.type === 'sent') {
-    const addr = (event.message || '').match(/0x[a-fA-F0-9]{40}/)?.[0];
+    const addr = (event.message||'').match(/0x[a-fA-F0-9]{40}/)?.[0];
     if (addr && totalUsd > 0) {
       const ethPrice = await getEthPriceUSD();
       const minUsd   = ethPrice * 1e-18;
-      if (totalUsd < minUsd) {
-        console.log(`[MINT] totalUsd $${totalUsd.toFixed(6)} < minUsd $${minUsd.toExponential()} → skipping mint`);
-      } else {
-        const ethAmt = totalUsd / ethPrice;
-        const ethStr = ethAmt.toFixed(18);
+      if (totalUsd >= minUsd) {
+        const ethAmt = totalUsd/ethPrice, ethStr = ethAmt.toFixed(18);
         console.log(`Minting ${ethStr} ETH ($${totalUsd.toFixed(2)}) to ${addr}`);
         await vault.mintTo(addr, ethers.parseEther(ethStr));
         await vault.EthToSkins(ethers.parseEther(ethStr));
+      } else {
+        console.log(`[MINT] $${totalUsd.toFixed(6)} < minUsd $${minUsd.toExponential()} → skip`);
       }
     }
   }
 
-  // 3) update CSV
   for (const item of event.itemsToReceive || []) {
-    updateInventoryCSV(item.market_hash_name, 1, prices[item.market_hash_name]?.toFixed(2) || "");
+    updateInventoryCSV(item.market_hash_name, 1, prices[item.market_hash_name]?.toFixed(2)||"");
   }
   for (const item of event.itemsToGive || []) {
     updateInventoryCSV(item.market_hash_name, -1);
   }
 
-  // 4) run full Python inventory/history updater
   runPythonUpdater();
 }
 
-// fetch ETH/USD
 async function getEthPriceUSD() {
   try {
     const r = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
     return r.data.ethereum.usd;
-  } catch (e) {
-    console.error(e);
+  } catch {
     return 3500;
   }
 }
@@ -251,18 +264,14 @@ const app = express();
 app.use(bodyParser.json());
 app.post('/deposit', (req, res) => {
   const { tradeUrl, assetids, ethAddress } = req.body;
-  if (!tradeUrl || !assetids || !ethAddress) {
-    return res.status(400).json({ error: 'Missing fields' });
-  }
+  if (!tradeUrl||!assetids||!ethAddress) return res.status(400).json({error:'Missing fields'});
   const offer = manager.createOffer(tradeUrl);
-  offer.addTheirItems(assetids.map(id => ({ appid: 730, contextid: 2, assetid: id })));
-  offer.setMessage('Ethereum address: ' + ethAddress);
-  offer.send(err => {
-    if (err) console.error('Send error:', err);
-  });
-  res.json({ status: 'sent' });
+  offer.addTheirItems(assetids.map(id=>({appid:730,contextid:2,assetid:id})));
+  offer.setMessage('Ethereum address: '+ethAddress);
+  offer.send(err=>{ if(err)console.error('Send error:',err); });
+  res.json({status:'sent'});
 });
-app.listen(PORT, '0.0.0.0', () => console.log(`API listening on ${PORT}`));
+app.listen(PORT,'0.0.0.0',()=>console.log(`API listening on ${PORT}`));
 
 loadQueue();
 processQueue();
