@@ -1,10 +1,13 @@
 # pe_scrape_price.py
+
 import re
 import time
+import sys
 import undetected_chromedriver as uc
-from pe_utils import pricempire_url  # Assuming you have this already
+from xvfbwrapper import Xvfb
+from pe_utils import pricempire_url  # Assumes this is present in same directory or PYTHONPATH
 
-DEBUG_MODE = False  # ← Enable detailed logging
+DEBUG_MODE = False  # Set to True to enable verbose logging
 
 def get_cs2_wear_order():
     return [
@@ -39,8 +42,21 @@ def pick_price_from_variants(elements, want_stattrak, variant_name):
 def get_pe_price_for_item(skin, driver=None):
     skin = skin.replace("&", "-")
     created_driver = False
+
     if driver is None:
-        driver = uc.Chrome()
+        vdisplay = Xvfb(width=1920, height=1080)
+        vdisplay.start()
+        global _vdisplay
+        _vdisplay = vdisplay  # store to stop later if we created it
+
+        options = uc.ChromeOptions()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+
+        driver = uc.Chrome(options=options)
         created_driver = True
 
     try:
@@ -53,7 +69,7 @@ def get_pe_price_for_item(skin, driver=None):
             print(f"[DEBUG] Target wear: '{variant_name}' (StatTrak: {want_stattrak})")
 
         driver.get(url)
-        time.sleep(1)
+        time.sleep(1.2)
 
         elements = driver.find_elements("css selector", "a[role='listitem']")
         if DEBUG_MODE:
@@ -112,10 +128,11 @@ def get_pe_price_for_item(skin, driver=None):
     finally:
         if created_driver:
             driver.quit()
+            if '_vdisplay' in globals():
+                _vdisplay.stop()
 
-# Optional CLI test
+# CLI test entrypoint
 if __name__ == "__main__":
-    import sys
     name = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else None
     if name:
         print(get_pe_price_for_item(name))
