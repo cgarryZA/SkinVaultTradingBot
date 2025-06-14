@@ -6,6 +6,10 @@ import undetected_chromedriver as uc
 from datetime import datetime, timedelta, timezone
 from web3 import Web3
 import argparse
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 # Ensure stdout is UTF-8 on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -22,8 +26,9 @@ CONTRACT_ABI     = [
     {"inputs":[{"internalType":"uint256","name":"skinsValue","type":"uint256"}],
      "name":"setValSkins","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]
-PRIVATE_KEY      = '75a2d1d156c4ad6a4b7e3a9f7efad9f521525306c5af4a8b708a4208b59e31ab'
-ETH_RPC_URL      = 'https://mainnet.infura.io/v3/5dba97c18dde4cc8b8a9bcf2c9b3c510'
+
+ETH_RPC_URL      = os.getenv('ETH_RPC_URL')
+PRIVATE_KEY      = os.getenv('PRIVATE_KEY')
 
 # import scraper
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../Price Scraper')))
@@ -192,12 +197,12 @@ if __name__ == '__main__':
     print(f"[DEBUG] total_eth   = {total_eth:.6f}")
     if last_eth is not None:
         pct_change = (total_eth - last_eth) / last_eth * 100
-        print(f"[DEBUG] pct_change = {pct_change:.2f}% (threshold = 0.50%)")
+        print(f"[DEBUG] pct_change = {pct_change:.2f}% (threshold = 1.0%)")
     else:
         print("[DEBUG] No prior ETH value; will update on-chain if force=True")
 
     # Decide on-chain update
-    if force or last_eth is None or abs(total_eth - last_eth)/ (last_eth or 1) >= 0.005:
+    if force or last_eth is None or abs(total_eth - last_eth)/ (last_eth or 1) >= 0.01:
         print("[DEBUG] Conditions met → calling setValSkins on-chain")
         set_val_skins_onchain(total_eth)
     else:

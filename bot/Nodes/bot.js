@@ -19,9 +19,9 @@ const SteamCommunity = require('steamcommunity');
 const TradeOfferManager = require('steam-tradeoffer-manager');
 
 // ========== ETH CONFIG ==========
-const PRIVATE_KEY      = '75a2d1d156c4ad6a4b7e3a9f7efad9f521525306c5af4a8b708a4208b59e31ab';
-const ETH_RPC_URL      = 'https://mainnet.infura.io/v3/5dba97c18dde4cc8b8a9bcf2c9b3c510';
-const CONTRACT_ADDRESS = '0xb730CFc309AD720E9184C9F8BDb0A10874587d1e';
+const PRIVATE_KEY      = config.private_key;
+const ETH_RPC_URL      = config.eth_rpc_url;
+const CONTRACT_ADDRESS = config.contract_address;
 const VAULT_ABI        = [
   'function mintTo(address,uint256)',
   'function EthToSkins(uint256)',
