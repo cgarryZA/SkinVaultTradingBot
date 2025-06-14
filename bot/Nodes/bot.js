@@ -244,7 +244,7 @@ app.post('/deposit', (req, res) => {
   });
   res.json({ status: 'sent' });
 });
-app.listen(PORT, () => console.log(`API listening on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`API listening on ${PORT}`));
 
 loadQueue();
 processQueue();
