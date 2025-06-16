@@ -55,56 +55,75 @@ def flatten_skin_name(skin_name):
 def pricempire_url(skin):
     skin = skin.strip()
     lower = skin.lower()
+
+    # --- PINS ---
+    parts = lower.split()
+    if parts and parts[-1] == 'pin':
+        slug = sanitize_for_url(skin)
+        return f"https://pricempire.com/cs2-items/pin/{slug}"
+
+    # --- GLOVES ---
     if is_glove(skin):
         name = skin.replace('★', '').replace('StatTrak™', '').replace('Souvenir', '').strip()
         m = re.match(r'([^\|]+)\s*\|\s*([^(]+(?:\([^)]+\))?)\s*\(([^)]+)\)', name)
         if m:
-            weapon = sanitize_for_url(m.group(1))
+            weapon    = sanitize_for_url(m.group(1))
             skin_name = flatten_skin_name(m.group(2))
-            wear = sanitize_for_url(m.group(3))
+            wear      = sanitize_for_url(m.group(3))
             return f"https://pricempire.com/cs2-items/glove/{weapon}-{skin_name}/{wear}"
         else:
             return f"https://pricempire.com/cs2-items/glove/{sanitize_for_url(name)}"
-    elif is_case_or_container(skin):
+
+    # --- CASES & CONTAINERS ---
+    if is_case_or_container(skin):
         return f"https://pricempire.com/cs2-items/container/{sanitize_for_url(skin)}"
-    elif 'sticker' in lower:
+
+    # --- STICKERS ---
+    if 'sticker' in lower:
+        # tournament-sticker with finish
         m = re.match(r'Sticker\s*\|\s*([^(|]+)\s*\(([^)]+)\)\s*\|\s*([^\|]+)', skin, re.IGNORECASE)
         if m:
-            team = sanitize_for_url(m.group(1))
-            finish = sanitize_for_url(m.group(2))
+            team       = sanitize_for_url(m.group(1))
+            finish     = sanitize_for_url(m.group(2))
             tournament = sanitize_for_url(m.group(3))
             return f"https://pricempire.com/cs2-items/tournament-sticker/sticker-{team}-{tournament}/{finish}"
+        # tournament-sticker without finish
         m = re.match(r'Sticker\s*\|\s*([^\|]+)\|\s*([^\|]+)', skin, re.IGNORECASE)
         if m:
-            team = sanitize_for_url(m.group(1))
+            team       = sanitize_for_url(m.group(1))
             tournament = sanitize_for_url(m.group(2))
             return f"https://pricempire.com/cs2-items/tournament-sticker/sticker-{team}-{tournament}"
+        # plain sticker with subtype
         m = re.match(r'Sticker\s*\|\s*([^\(]+)\(([^)]+)\)', skin, re.IGNORECASE)
         if m:
             main = sanitize_for_url(m.group(1))
-            sub = sanitize_for_url(m.group(2))
+            sub  = sanitize_for_url(m.group(2))
             return f"https://pricempire.com/cs2-items/sticker/sticker-{main}/{sub}"
+        # tournament-autograph sticker
         m = re.match(r'Sticker\s*\|\s*([^(|]+)\s*\(([^)]+)\)\s*\|\s*([^\|]+)', skin, re.IGNORECASE)
         if m:
-            player = sanitize_for_url(m.group(1))
-            team = sanitize_for_url(m.group(2))
+            player     = sanitize_for_url(m.group(1))
+            team       = sanitize_for_url(m.group(2))
             tournament = sanitize_for_url(m.group(3))
             return f"https://pricempire.com/cs2-items/tournament-autograph/sticker-{player}-{team}-{tournament}"
+        # fallback
         return f"https://pricempire.com/cs2-items/sticker/{sanitize_for_url(skin)}"
-    else:
-        is_stattrak = 'stattrak' in lower
-        is_souvenir = 'souvenir' in lower
-        name = skin.replace('★', '').replace('StatTrak™', '').replace('Souvenir', '').strip()
-        m = re.match(r'([^\|]+)\|\s*([^(]+(?:\([^)]+\))?)\s*\(([^)]+)\)', name)
-        if m:
-            weapon = sanitize_for_url(m.group(1))
-            skin_name = flatten_skin_name(m.group(2))
-            wear = sanitize_for_url(m.group(3))
-            if is_stattrak:
-                return f"https://pricempire.com/cs2-items/skin/{weapon}-{skin_name}/stattrak-{wear}"
-            elif is_souvenir:
-                return f"https://pricempire.com/cs2-items/skin/{weapon}-{skin_name}/souvenir-{wear}"
-            else:
-                return f"https://pricempire.com/cs2-items/skin/{weapon}-{skin_name}/{wear}"
+
+    # --- STANDARD SKINS ---
+    is_stattrak = 'stattrak' in lower
+    is_souvenir = 'souvenir' in lower
+    name = skin.replace('★', '').replace('StatTrak™', '').replace('Souvenir', '').strip()
+    m = re.match(r'([^\|]+)\|\s*([^(]+(?:\([^)]+\))?)\s*\(([^)]+)\)', name)
+    if m:
+        weapon    = sanitize_for_url(m.group(1))
+        skin_name = flatten_skin_name(m.group(2))
+        wear      = sanitize_for_url(m.group(3))
+        base      = f"https://pricempire.com/cs2-items/skin/{weapon}-{skin_name}"
+        if is_stattrak:
+            return f"{base}/stattrak-{wear}"
+        elif is_souvenir:
+            return f"{base}/souvenir-{wear}"
         else:
-            return f"https://pricempire.com/cs2-items/skin/{sanitize_for_url(name)}"
+            return f"{base}/{wear}"
+    else:
+        return f"https://pricempire.com/cs2-items/skin/{sanitize_for_url(name)}"

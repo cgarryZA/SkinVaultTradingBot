@@ -30,8 +30,10 @@ def fetch_price(row):
         print(f"[ERROR] {skin}: {e}")
         price_usd, market_name, market_price = "", "", ""
     finally:
-        try: driver.quit()
-        except: pass
+        try:
+            driver.quit()
+        except:
+            pass
 
     row['PriceUSD'] = price_usd
     row['RecommendedMarket'] = market_name
@@ -47,15 +49,39 @@ def main():
     with open(INFILE, encoding="utf-8") as f:
         buy_rows = [r for r in csv.DictReader(f) if r.get('Action','').upper()=='BUY']
 
+    # --- FIRST PASS ---
     results = []
+    failed_rows = []
+
+    print(f"Starting first pass on {len(buy_rows)} skins…")
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = { ex.submit(fetch_price, row): row for row in buy_rows }
         for fut in as_completed(futures):
             r = fut.result()
-            results.append(r)
-            print(f"[DONE] {r['Skin']} → {r['RecommendedMarketPrice']} via {r['RecommendedMarket']}")
+            if r.get('PriceUSD'):
+                results.append(r)
+                print(f"[DONE]  {r['Skin']} → {r['RecommendedMarketPrice']} via {r['RecommendedMarket']}")
+            else:
+                failed_rows.append(r)
+                print(f"[FAILED] {r['Skin']} (will retry later)")
 
-    # sort cheapest → most expensive, by RecommendedMarketPrice
+    # --- SECOND PASS (retry failures once) ---
+    if failed_rows:
+        print(f"\nRetrying {len(failed_rows)} failed skins…\n")
+        retry_results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            futures = { ex.submit(fetch_price, row): row for row in failed_rows }
+            for fut in as_completed(futures):
+                r = fut.result()
+                retry_results.append(r)
+                if r.get('PriceUSD'):
+                    print(f"[RETRY DONE]  {r['Skin']} → {r['RecommendedMarketPrice']} via {r['RecommendedMarket']}")
+                else:
+                    print(f"[FAILED AGAIN] {r['Skin']}")
+        # extend main results with the retry results (whether empty or not)
+        results.extend(retry_results)
+
+    # --- SORT CHEAPEST → MOST EXPENSIVE ---
     def price_key(r):
         try:
             s = r.get('RecommendedMarketPrice','')
@@ -65,7 +91,7 @@ def main():
 
     results.sort(key=price_key)
 
-    # write out
+    # --- WRITE OUT ---
     fieldnames = ['Skin','Diff','Action','PriceUSD','RecommendedMarket','RecommendedMarketPrice']
     with open(OUTFILE,'w',encoding='utf-8',newline='') as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -80,7 +106,7 @@ def main():
                 'RecommendedMarketPrice': r.get('RecommendedMarketPrice',''),
             })
 
-    print(f"\nWrote {len(results)} buy orders sorted by market price (cheapest→expensive) to {OUTFILE}")
+    print(f"\nWrote {len(results)} buy orders (with retries) sorted by market price (cheapest→expensive) to {OUTFILE}")
 
 if __name__=='__main__':
     import argparse

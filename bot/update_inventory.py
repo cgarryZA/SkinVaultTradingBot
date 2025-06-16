@@ -5,6 +5,7 @@ import requests
 import undetected_chromedriver as uc
 from datetime import datetime, timedelta, timezone
 from web3 import Web3
+from web3.exceptions import TimeExhausted
 import argparse
 from dotenv import load_dotenv
 
@@ -26,14 +27,12 @@ CONTRACT_ABI     = [
     {"inputs":[{"internalType":"uint256","name":"skinsValue","type":"uint256"}],
      "name":"setValSkins","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ]
-
 ETH_RPC_URL      = os.getenv('ETH_RPC_URL')
 PRIVATE_KEY      = os.getenv('PRIVATE_KEY')
 
 # import scraper
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../Price Scraper')))
 from pe_scrape_price import get_pe_price_for_item
-from web3.exceptions import TimeExhausted
 
 def get_eth_usd_price():
     try:
@@ -82,7 +81,6 @@ def set_val_skins_onchain(total_eth):
     print(f"[CONTRACT] tx sent: {txh.hex()}")
 
     try:
-        # wait up to 120s (default); adjust poll_latency if needed
         receipt = w3.eth.wait_for_transaction_receipt(txh, timeout=120)
         print(f"[CONTRACT] Confirmed in block {receipt.blockNumber}")
         return True
@@ -105,43 +103,48 @@ def save_history(date, usd, eth, eth_price):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--force', action='store_true', help='Force update all items')
+    parser.add_argument('--no-update', action='store_true',
+                        help='Only refresh prices in CSV; skip any on-chain update')
     args = parser.parse_args()
-    force = args.force
+    force     = args.force
+    no_update = args.no_update
 
-    # Load inventory CSV
     if not os.path.exists(INVENTORY_CSV):
         print(f"[ERROR] {INVENTORY_CSV} not found.")
         sys.exit(1)
+
+    # Load inventory
     with open(INVENTORY_CSV, encoding='utf-8') as f:
         rows = list(csv.DictReader(f))
     fieldnames = rows[0].keys()
 
-    # Scrape & update prices
-    driver = uc.Chrome()
-    total_usd   = 0.0
-    now         = datetime.now(timezone.utc)
+    failed_rows = []
     updated_any = False
+    now = datetime.now(timezone.utc)
 
+    driver = uc.Chrome()
+
+    # --- FIRST PASS ---
+    print(f"Starting first pass on {len(rows)} inventory items…")
     for row in rows:
         skin     = row['Skin']
         qty      = int(row.get('QTY', 0))
-        last_str = row.get('LastUpdated', '').strip().upper()
+        last_str = row.get('LastUpdated','').strip().upper()
 
-        # existing price
+        # parse existing price
         try:
             price_exist = float(row.get('Price','').replace('$','').replace(',',''))
         except:
             price_exist = 0.0
 
-        # skip NEVER entries
-        if last_str == 'NEVER':
-            total_usd += price_exist * qty
+        # skip NEVER unless forced
+        if last_str == 'NEVER' and not force:
             print(f"[SKIP] '{skin}' set to NEVER.")
             continue
 
-        # parse last updated date
+        # check staleness
         last_dt = None
-        if last_str:
+        if last_str and last_str != 'NEVER':
             try:
                 last_dt = datetime.fromisoformat(last_str)
                 if last_dt.tzinfo is None:
@@ -151,10 +154,9 @@ if __name__ == '__main__':
 
         needs = force or not last_dt or (now - last_dt) > timedelta(days=1) or price_exist <= 0.0
         if not needs:
-            total_usd += price_exist * qty
             continue
 
-        # fetch new price
+        # fetch price
         driver.execute_script("window.open('');")
         driver.switch_to.window(driver.window_handles[-1])
         price_str, _, _ = get_pe_price_for_item(skin, driver)
@@ -166,32 +168,58 @@ if __name__ == '__main__':
             row['Price']       = f"{price:.2f}"
             row['LastUpdated'] = now.isoformat()
             updated_any        = True
+            print(f"[DONE]  {skin} → ${price:.2f}")
         else:
-            price = price_exist
+            failed_rows.append(row)
+            print(f"[FAILED] {skin} (queued for retry)")
 
-        total_usd += price * qty
-        print(f"{skin}: {qty}×${price:.2f} = ${price*qty:.2f}")
+    # --- SECOND PASS (retry failures once) ---
+    if failed_rows:
+        print(f"\nRetrying {len(failed_rows)} failed lookups…")
+        for row in failed_rows:
+            skin = row['Skin']
+            driver.execute_script("window.open('');")
+            driver.switch_to.window(driver.window_handles[-1])
+            price_str, _, _ = get_pe_price_for_item(skin, driver)
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+
+            if price_str:
+                price = float(price_str.replace('$','').replace(',',''))
+                row['Price']       = f"{price:.2f}"
+                row['LastUpdated'] = now.isoformat()
+                updated_any        = True
+                print(f"[RETRY DONE]  {skin} → ${price:.2f}")
+            else:
+                print(f"[FAILED AGAIN] {skin} (keeping existing price)")
 
     driver.quit()
 
-    # Write updated inventory CSV
+    # --- WRITE UPDATED INVENTORY ---
     with open(INVENTORY_CSV, 'w', newline='', encoding='utf-8') as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        w.writerows(rows)
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
-    # Compute totals
+    # --- COMPUTE TOTALS ---
+    total_usd = 0.0
+    for row in rows:
+        qty  = int(row.get('QTY',0))
+        try:
+            price = float(row.get('Price','').replace('$','').replace(',',''))
+        except:
+            price = 0.0
+        total_usd += price * qty
+
     eth_price = get_eth_usd_price()
     total_eth = total_usd / eth_price
-    print(f"Total USD=${total_usd:.2f}, ETH={total_eth:.6f} (ETH/USD={eth_price:.2f})")
+    print(f"\nTotal USD=${total_usd:.2f}, ETH={total_eth:.6f} (ETH/USD={eth_price:.2f})")
 
-    # Load previous on-chain ETH snapshot
+    # record history
     last_eth = get_last_eth_value()
-
-    # Save new snapshot
     save_history(now.isoformat(), total_usd, total_eth, eth_price)
 
-    # DEBUG output
+    # debug info
     print(f"[DEBUG] updated_any = {updated_any}")
     print(f"[DEBUG] last_eth    = {last_eth}")
     print(f"[DEBUG] total_eth   = {total_eth:.6f}")
@@ -199,10 +227,12 @@ if __name__ == '__main__':
         pct_change = (total_eth - last_eth) / last_eth * 100
         print(f"[DEBUG] pct_change = {pct_change:.2f}% (threshold = 1.0%)")
     else:
-        print("[DEBUG] No prior ETH value; will update on-chain if force=True")
+        print("[DEBUG] No prior ETH value; will update on-chain if force=True)")
 
-    # Decide on-chain update
-    if force or last_eth is None or abs(total_eth - last_eth)/ (last_eth or 1) >= 0.01:
+    # decide on-chain update
+    if no_update:
+        print("[INFO] --no-update specified → skipping on-chain update")
+    elif force or last_eth is None or abs(total_eth - last_eth)/(last_eth or 1) >= 0.01:
         print("[DEBUG] Conditions met → calling setValSkins on-chain")
         set_val_skins_onchain(total_eth)
     else:
