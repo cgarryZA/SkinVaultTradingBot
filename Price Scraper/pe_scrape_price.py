@@ -2,7 +2,6 @@
 import re
 import time
 import undetected_chromedriver as uc
-from selenium.webdriver.support.ui import WebDriverWait
 from pe_utils import pricempire_url  # Assuming you have this already
 
 DEBUG_MODE = False  # ← Enable detailed logging
@@ -54,9 +53,7 @@ def get_pe_price_for_item(skin, driver=None):
             print(f"[DEBUG] Target wear: '{variant_name}' (StatTrak: {want_stattrak})")
 
         driver.get(url)
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a[role='listitem']"))
-        )
+        time.sleep(1)
 
         elements = driver.find_elements("css selector", "a[role='listitem']")
         if DEBUG_MODE:
